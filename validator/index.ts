@@ -150,7 +150,7 @@ async function pingServer(): Promise<[PingResponse | null, Error | null]> {
             return [null, new Error('Hotkey address not available')];
         }
 
-        const response = await fetch('https://77.creativebuilds.io/ping', {
+        const response = await fetch(`${process.env.PRODUCTION_URL || 'https://77.creativebuilds.io'}/ping`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -201,10 +201,68 @@ async function checkVersionCompatibility(): Promise<[boolean, Error | null]> {
         return [false, new Error('No ping response received')];
     }
 
+    // Check if this is a version incompatibility response (server returns success: false with versionCompatible: false)
+    if (!pingResponse.success && pingResponse.versionCompatible === false) {
+        // This is a version incompatibility - trigger auto-update
+        const now = Date.now();
+        const existingWarning = await loadVersionWarning();
+        
+        if (!existingWarning) {
+            // First time seeing this version incompatibility
+            const newWarning: VersionWarning = {
+                firstWarningTime: now,
+                lastWarningTime: now,
+                serverVersion: pingResponse.serverVersion,
+                clientVersion: pingResponse.clientVersion,
+                warningCount: 1
+            };
+            await saveVersionWarning(newWarning);
+            
+            const errorMsg = `Version incompatibility detected! Server version: ${pingResponse.serverVersion}, Client version: ${pingResponse.clientVersion}`;
+            console.error(errorMsg);
+            
+            if (AUTO_UPDATE_ENABLED) {
+                console.log('Auto-update enabled. Attempting to update...');
+                await attemptAutoUpdate();
+            } else {
+                console.error('Auto-update disabled. Please update manually or set AUTO_UPDATE_ENABLED=true');
+            }
+            
+            return [false, new Error(errorMsg)];
+        }
+
+        // Update existing warning
+        existingWarning.lastWarningTime = now;
+        existingWarning.warningCount++;
+        existingWarning.serverVersion = pingResponse.serverVersion;
+        existingWarning.clientVersion = pingResponse.clientVersion;
+        await saveVersionWarning(existingWarning);
+
+        const timeSinceFirstWarning = now - existingWarning.firstWarningTime;
+        
+        if (timeSinceFirstWarning >= VERSION_CHECK_TIMEOUT_MS) {
+            const errorMsg = `Version incompatibility timeout reached (12h). Shutting down validator. Server: ${pingResponse.serverVersion}, Client: ${pingResponse.clientVersion}`;
+            console.error(errorMsg);
+            return [false, new Error(errorMsg)];
+        }
+
+        const errorMsg = `Version incompatibility detected! Server: ${pingResponse.serverVersion}, Client: ${pingResponse.clientVersion}. Time remaining: ${Math.round((VERSION_CHECK_TIMEOUT_MS - timeSinceFirstWarning) / (60 * 60 * 1000))}h`;
+        console.error(errorMsg);
+        
+        if (AUTO_UPDATE_ENABLED) {
+            console.log('Auto-update enabled. Attempting to update...');
+            await attemptAutoUpdate();
+        }
+        
+        return [false, new Error(errorMsg)];
+    }
+
+    // Handle other failure cases (not version related)
     if (!pingResponse.success) {
         return [false, new Error(pingResponse.error || 'Ping failed')];
     }
 
+    // Success case - versions are compatible
     if (pingResponse.versionCompatible) {
         // Clear any existing warning file if versions are now compatible
         try {
@@ -215,57 +273,9 @@ async function checkVersionCompatibility(): Promise<[boolean, Error | null]> {
         return [true, null];
     }
 
-    // Version is incompatible
-    const now = Date.now();
-    const existingWarning = await loadVersionWarning();
-    
-    if (!existingWarning) {
-        // First time seeing this version incompatibility
-        const newWarning: VersionWarning = {
-            firstWarningTime: now,
-            lastWarningTime: now,
-            serverVersion: pingResponse.serverVersion,
-            clientVersion: pingResponse.clientVersion,
-            warningCount: 1
-        };
-        await saveVersionWarning(newWarning);
-        
-        const errorMsg = `Version incompatibility detected! Server version: ${pingResponse.serverVersion}, Client version: ${pingResponse.clientVersion}`;
-        console.error(errorMsg);
-        
-        if (AUTO_UPDATE_ENABLED) {
-            console.log('Auto-update enabled. Attempting to update...');
-            await attemptAutoUpdate();
-        } else {
-            console.error('Auto-update disabled. Please update manually or set AUTO_UPDATE_ENABLED=true');
-        }
-        
-        return [false, new Error(errorMsg)];
-    }
-
-    // Update existing warning
-    existingWarning.lastWarningTime = now;
-    existingWarning.warningCount++;
-    existingWarning.serverVersion = pingResponse.serverVersion;
-    existingWarning.clientVersion = pingResponse.clientVersion;
-    await saveVersionWarning(existingWarning);
-
-    const timeSinceFirstWarning = now - existingWarning.firstWarningTime;
-    
-    if (timeSinceFirstWarning >= VERSION_CHECK_TIMEOUT_MS) {
-        const errorMsg = `Version incompatibility timeout reached (12h). Shutting down validator. Server: ${pingResponse.serverVersion}, Client: ${pingResponse.clientVersion}`;
-        console.error(errorMsg);
-        return [false, new Error(errorMsg)];
-    }
-
-    const errorMsg = `Version incompatibility detected! Server: ${pingResponse.serverVersion}, Client: ${pingResponse.clientVersion}. Time remaining: ${Math.round((VERSION_CHECK_TIMEOUT_MS - timeSinceFirstWarning) / (60 * 60 * 1000))}h`;
+    // This shouldn't happen (success: true but versionCompatible: false), but handle it
+    const errorMsg = `Unexpected server response: success=true but versionCompatible=false`;
     console.error(errorMsg);
-    
-    if (AUTO_UPDATE_ENABLED) {
-        console.log('Auto-update enabled. Attempting to update...');
-        await attemptAutoUpdate();
-    }
-    
     return [false, new Error(errorMsg)];
 }
 
@@ -434,8 +444,10 @@ async function main(): Promise<void> {
         const [isCompatible, versionErr] = await checkVersionCompatibility();
         if (versionErr) {
             console.error('Version check failed on startup:', versionErr);
+            // If we have an existing warning and AUTO_UPDATE_ENABLED, try to update
+            // This handles cases where we already know there's a version issue
             if (AUTO_UPDATE_ENABLED) {
-                console.log('Auto-update enabled. Attempting to update...');
+                console.log('Existing version warning detected and auto-update enabled. Attempting to update...');
                 await attemptAutoUpdate();
             }
         }
@@ -563,6 +575,15 @@ async function main(): Promise<void> {
             }
 
             userLog(`Received weights for ${Object.keys(uidWeights).length} UIDs from the server.`);
+            
+            // Log weights data if console logging is enabled
+            if (LOG_CONSOLE) {
+                console.log(`Mapped weights (uid:address:weight):`);
+                Object.entries(uidWeights).forEach(([uid, weight]) => {
+                    const address = Object.keys(hotkeyWeights).find(key => hotkeyToUid[key] === Number(uid));
+                    console.log(`  ${uid}:${address}: ${weight.toFixed(6)}`);
+                });
+            }
             
             // Update EMA weights (by uid)
             emaWeights = updateEma(emaWeights, uidWeights);
@@ -810,7 +831,7 @@ async function fetchWeightsFromServer(): Promise<[Record<string, number> | null,
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-            const response = await fetch('https://77.creativebuilds.io/weights', {
+            const response = await fetch(`${process.env.PRODUCTION_URL || 'https://77.creativebuilds.io'}/weights`, {
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
@@ -858,7 +879,7 @@ async function fetchWeightsFromServer(): Promise<[Record<string, number> | null,
 
 async function fetchRegistryMap(): Promise<[RegistryMapResponse | null, Error | null]> {
   try {
-    const response = await fetch('https://77.creativebuilds.io/allMiners');
+    const response = await fetch(`${process.env.PRODUCTION_URL || 'https://77.creativebuilds.io'}/allMiners`);
     const data = await response.json() as RegistryMapResponse;
     
     if (!data.success) return [null, new Error(data.error || 'Failed to fetch miners')];

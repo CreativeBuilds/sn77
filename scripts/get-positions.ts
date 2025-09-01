@@ -48,7 +48,7 @@ interface PositionsResponse {
 // #endregion
 
 const BITTENSOR_ENDPOINT = 'wss://entrypoint-finney.opentensor.ai:443';
-const API_URL = 'http://77.creativebuilds.io/positions';
+const API_URL = process.env.PRODUCTION_URL ||'http://77.creativebuilds.io/positions';
 
 const getPositions = async (): Promise<[PositionsResponse | null, Error | null]> => {
     try {

@@ -10,7 +10,7 @@ import { formatAddress, normalizePoolWeights, Pool } from '../utils/poolUtils';
 import { searchPools } from '../utils/poolSearchUtils';
 import * as readline from 'readline';
 
-const PRODUCTION_URL = 'https://77.creativebuilds.io';
+const PRODUCTION_URL = process.env.PRODUCTION_URL || 'https://77.creativebuilds.io';
 const MAX_POOLS = 10;
 
 async function askQuestion(rl: readline.Interface, question: string): Promise<string> {
