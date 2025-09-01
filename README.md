@@ -1,108 +1,32 @@
 # Subnet77 Liquidity Auction & Voting
 
-This project focuses on deploying and managing the [`Subnet77LiquidityAuction.sol`](mdc:contracts/Subnet77LiquidityAuction.sol) and [`ClaimVote.sol`](mdc:contracts/ClaimVote.sol) smart contracts using Hardhat, along with associated helper scripts.
+This project manages a liquidity mining system for the Bittensor ecosystem, where token holders vote on liquidity pools and validators process these votes to set miner weights on subnet 77.
 
-## Core Contracts
+## Architecture Overview
 
-*   **Auction Contract:** [`contracts/Subnet77LiquidityAuction.sol`](mdc:contracts/Subnet77LiquidityAuction.sol)
-    *   Manages the liquidity pool auction, including bidding, price decay, and pool management.
-    *   **Refactored:** Pool storage was changed from a fixed array to a `mapping(uint256 => Pool)` where the key is a unique, non-reusable `poolId`. Active pools are tracked separately.
-    *   **Hard Link Note:** This file is a hard link to `/Users/creativebuilds/Projects/v3-bridge/contracts/Subnet77LiquidityAuction.sol`.
-*   **Voting Contract:** [`contracts/ClaimVote.sol`](mdc:contracts/ClaimVote.sol)
-    *   Allows users (identified by Bittensor public keys) to submit weighted votes for active pools listed in the Auction Contract.
-    *   Verifies Ed25519 signatures against submitted vote messages.
-    *   Uses the [`VerifySignature.sol`](mdc:contracts/VerifySignature.sol) library for signature verification.
-    *   Interacts with the Auction Contract via the [`ISubnet77LiquidityAuction.sol`](mdc:interfaces/ISubnet77LiquidityAuction.sol) interface to check pool validity and activity.
-*   **Testing Contract:** [`contracts/simpleAddStake.sol`](mdc:contracts/simpleAddStake.sol)
-    *   A minimal contract created to test the Bittensor `addStake` and `removeStake` precompiles directly.
+The system operates through a server (`https://77.creativebuilds.io`) that handles:
+- **Vote Collection**: Token holders submit weighted votes for liquidity pools
+- **Weight Calculation**: The server processes votes and calculates final miner weights
+- **Validator Integration**: Validators fetch weights from the server and set them on-chain
 
-## Validator
+## Core Components
 
-The validator (`validator/index.ts`) is responsible for:
-- Fetching weights from the central server
-- Setting weights on the Bittensor network
-- **Version compatibility checking** with automatic updates
+### Server
+- **Vote Management**: Collects and stores user votes with Ed25519 signature verification
+- **Weight Calculation**: Processes votes and calculates final miner weights based on token holdings and liquidity positions
+- **API Endpoints**: Provides RESTful API for all system operations
 
-### Version Management
+### Validator (`validator/index.ts`)
+- **Weight Fetching**: Retrieves calculated weights from the server
+- **On-chain Updates**: Sets miner weights on the Bittensor network
+- **Version Management**: Includes automatic version checking and update capabilities
 
-The validator includes automatic version checking and update capabilities:
+### Scripts
+- **Voting**: Submit weighted votes for liquidity pools
+- **Registration**: Link Bittensor hotkeys to Ethereum addresses
+- **Pool Management**: View current pool information and voting status
 
-#### Environment Variables
-- `AUTO_UPDATE_ENABLED`: Set to `true` to enable automatic updates (default: `false`)
-- `TEST_MODE`: Set to `true` to run in test mode (default: `false`)
-- `LOG`: Set to `true` to enable console logging (default: `false`)
-
-#### Features
-- **Periodic Version Checks**: Every 30 minutes, the validator pings the server to check version compatibility
-- **12-Hour Timeout**: If version incompatibility persists for 12 hours, the validator automatically shuts down
-- **Auto-Update**: When enabled, automatically pulls latest changes and restarts
-- **Persistent Warnings**: Version warnings are saved locally and checked on startup
-- **Graceful Degradation**: Version issues don't immediately stop the validator, allowing time for updates
-
-#### Running the Validator
-```bash
-# Using npm script
-bun run validator
-
-# Direct execution
-bunx tsx validator/index.ts
-```
-
-## Interfaces
-
-*   [`interfaces/ISubnet77LiquidityAuction.sol`](mdc:interfaces/ISubnet77LiquidityAuction.sol): Interface used by `ClaimVote.sol` to interact with `Subnet77LiquidityAuction.sol`.
-
-## Deployment
-
-*   Deployments are managed using the `hardhat-deploy` plugin.
-*   The deployment script for the auction contract is [`deploy/01-deploy-auction.js`](mdc:deploy/01-deploy-auction.js).
-    *   *Note: Deployment script for `ClaimVote.sol` needs to be created/updated.* This script likely needs to set the auction contract address in the deployed `ClaimVote` contract.
-*   Deployments can be run using `npx hardhat deploy`.
-
-## Configuration
-
-*   Hardhat configuration: [`hardhat.config.js`](mdc:hardhat.config.js) (includes `hardhat-deploy`).
-*   Node.js dependencies: [`package.json`](mdc:package.json).
-*   Environment Variables:
-    *   `.env`: Stores EVM `PRIVATE_KEY` for transaction signing, potentially RPC URLs.
-    *   `.env.tao`: Stores deployed contract addresses like `CLAIM_VOTE_ADDRESS`.
-
-## Scripts
-
-*   **Key Generation:** [`scripts/create-key.ts`](mdc:scripts/create-key.ts)
-    *   Generates or loads EVM wallets (from private key or mnemonic).
-    *   Derives the corresponding Bittensor SS58 address using the Frontier HashedAddressMapping (`evm:` prefix + blake2b hash).
-    *   Saves keys and addresses to `.env` and a JSON file in `.keys/`.
-*   **Voting:** [`scripts/vote.py`](mdc:scripts/vote.py)
-    *   Submits votes to the `ClaimVote.sol` contract.
-    *   Loads a Bittensor wallet by name (`--wallet.name`) using the `bittensor` Python library.
-    *   Signs the vote message using the wallet's **coldkey** (Ed25519).
-    *   Sends the transaction using the EVM `PRIVATE_KEY` from `.env`.
-    *   Requires Python environment and dependencies (see below).
-
-## Python Environment
-
-*   A Python virtual environment is used for Python scripts: `.venv/`
-*   Dependencies include `bittensor`, `web3.py`, `python-dotenv`.
-*   Activate using `source .venv/bin/activate`.
-*   Install dependencies using `pip install -r requirements.txt` (if a requirements file exists) or `pip install ...`.
-
-## Preferred Runtime: Bun
-
-This project uses Bun as the preferred JavaScript runtime and package manager.
-
-*   Use `bun install` instead of `npm install` or `yarn install`.
-*   Use `bun run <script>` instead of `npm run <script>` or `yarn <script>`.
-*   Use `bunx` instead of `npx`.
-
-# Subnet 77 – Liquidity
-
-> A complete on-chain liquidity mining system for the Bittensor ecosystem.
-
-
----
-
-## ✨ Quick start
+## Quick Start
 
 1. **Install dependencies** (Bun is the primary runtime)
 
@@ -110,11 +34,11 @@ This project uses Bun as the preferred JavaScript runtime and package manager.
 bun install
 ```
 
-2. **Copy & edit the environment template**
+2. **Set up environment variables**
 
 ```bash
 cp .env.example .env
-# then fill in the blanks – see the Environment section below
+# Fill in the required variables (see Environment section below)
 ```
 
 3. **Query current pool weights**
@@ -122,8 +46,6 @@ cp .env.example .env
 ```bash
 bun run pools
 ```
-
----
 
 ## User Roles & Actions
 
@@ -139,25 +61,18 @@ Token holders can vote on which liquidity pools should receive weight in the sys
 **Key command:**
 ```bash
 # Submit votes for pools (weights must sum to 10000)
-just vote --votes 0xPOOL_A,6000;0xPOOL_B,4000
-
-# Alternatively just run
 just vote
-# and a prompt will ask you for the pools you wish to vote for
 
 # Retract all votes (send empty allocation)
 just vote --retract
-# or
-just vote -r
 ```
 
 **Setup required:**
 - `HOLDER_COLDKEY` in `.env` (your Bittensor coldkey for signing votes)
-- EVM private key for transaction signing
 
 ### ⚡ Validators
 
-Validators read on-chain votes, normalize them by token-holder balance, mix-in Uniswap liquidity, and periodically push **final miner weights** to subnet 77.
+Validators read weights from the server and periodically push them to subnet 77.
 
 **What you can do:**
 - **Run weight calculation**: Process votes and compute final miner weights
@@ -206,20 +121,16 @@ bun run pools
 - `ETH_KEY` in `.env` (your Ethereum private key)
 - Bittensor wallet with stake on subnet 77
 
----
-
-## Scripts cheat-sheet
+## Scripts Reference
 
 | Script | Purpose | Usage |
 |--------|---------|-----------------|
 | `create-key.ts` | Generate or import an **EVM keypair** and derive the corresponding **SS58** address. Stores everything in `.keys/` and can update `.env`. | `bunx tsx scripts/create-key.ts` |
-| `register.ts` | Link a **Bittensor hotkey** → **EVM address** on-chain via `claimAddress`. Requires `MINER_HOTKEY` and `ETH_KEY` environment variables. | `just register` |
+| `register.ts` | Link a **Bittensor hotkey** → **EVM address** via the server. Requires `MINER_HOTKEY` and `ETH_KEY` environment variables. | `just register` |
 | `vote.ts` | Interactive pool-weight voting. Searches and selects pools, then submits weighted votes that sum to 10000. Supports retracting votes with `--retract` flag. | `just vote` |
 | `pools.ts` | Display current pool information from the API including pool details, voter information, and alpha token balances. | `just pools` |
 
 > Run scripts with `LOG=true` to enable verbose logging where available.
-
----
 
 ## Justfile Commands
 
@@ -231,9 +142,7 @@ The project uses `just` as a command runner for common tasks:
 | `just vote` | Submit votes for liquidity pools |
 | `just validate` | Start the validator to process votes and submit weights |
 
----
-
-## Environment variables
+## Environment Variables
 
 Create a `.env` file in the project root. The most important keys are:
 
@@ -259,6 +168,9 @@ MINER_HOTKEY=
 # MINER ONLY: ethereum private key hex string
 # Used for ethereum wallet in register.ts script
 ETH_KEY=
+
+# VALIDATOR ONLY: OPT-IN: will automatically git pull when a new minor version is live
+AUTO_UPDATE_ENABLED=false
 ```
 
 *Everything else has sensible defaults or is only required for specific tasks.*
@@ -267,13 +179,66 @@ ETH_KEY=
 
 • **The Graph**: Log in to [Subgraph Studio](https://thegraph.com/studio/apikeys/) → **API Keys** in the sidebar → *Create API Key* → copy the generated token. See the official guide for details ([docs](https://thegraph.com/docs/en/subgraphs/querying/managing-api-keys/)).
 
----
+## API Endpoints
+
+The server provides the following key endpoints:
+
+- **`/updateVotes`**: Submit or update votes for liquidity pools (includes cooldown management)
+- **`/claimAddress`**: Register Ethereum addresses for Bittensor hotkeys
+- **`/weights`**: Retrieve final calculated miner weights
+- **`/pools`**: Get current pool information and voting status
+- **`/positions`**: Fetch Uniswap V3 liquidity positions for miners with USD values
+- **`/voteCooldown/:address`**: Check voting cooldown status for an address
+- **`/voteHistory/:address`**: View complete vote change history for an address
+- **`/userVotes/:address`**: Get current votes for a specific address
+- **`/allVotes`**: Retrieve all votes with token-based weight multipliers
+- **`/allHolders`**: Get all token holders and their balances
+- **`/allMiners`**: List all subnet miners with linked Ethereum addresses
+- **`/ping`**: Version compatibility check for validators
+
+### Key Features
+
+#### Vote Cooldown Management
+The system includes sophisticated cooldown management to prevent gaming:
+- **Base cooldown**: 72 minutes after vote changes
+- **Progressive system**: Cooldown doubles for frequent changes (72m → 144m → 288m → 576m)
+- **Maximum cap**: 8 hours maximum cooldown
+- **Reset mechanism**: 24 hours of inactivity resets to base cooldown
+- **First-time voting**: No cooldown for new voters
+
+#### Enhanced Position Data
+Liquidity positions now include:
+- Current token amounts and USD values
+- CoinGecko price integration
+- Automatic filtering of inactive positions
+- Real-time emission calculations
+
+#### Vote History & Transparency
+- Complete audit trail of all vote changes
+- Detailed cooldown timing information
+- Change counting and progressive cooldown tracking
+
+See `validator/api-server-docs.json` for complete API documentation.
+
+## Version Management
+
+The validator includes automatic version checking and update capabilities:
+
+#### Environment Variables
+- `AUTO_UPDATE_ENABLED`: Set to `true` to enable automatic updates (default: `false`)
+- `TEST_MODE`: Set to `true` to run in test mode (default: `false`)
+- `LOG`: Set to `true` to enable console logging (default: `false`)
+
+#### Features
+- **Periodic Version Checks**: Every 30 minutes, the validator pings the server to check version compatibility
+- **12-Hour Timeout**: If version incompatibility persists for 12 hours, the validator automatically shuts down
+- **Auto-Update**: When enabled, automatically pulls latest changes and restarts
+- **Persistent Warnings**: Version warnings are saved locally and checked on startup
+- **Graceful Degradation**: Version issues don't immediately stop the validator, allowing time for updates
 
 ## Contributing
 
 PRs welcome – especially on optimisation of the weight formula, better docs, or additional scripts.
-
----
 
 ## License
 
