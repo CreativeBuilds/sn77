@@ -1,5 +1,6 @@
 require("@nomicfoundation/hardhat-toolbox");
 require("hardhat-deploy");
+require("hardhat-deploy-ethers");
 const path = require("path");
 
 require("dotenv").config({
