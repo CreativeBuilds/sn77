@@ -25,6 +25,7 @@ The system operates through a server (`https://77.creativebuilds.io`) that handl
 - **Voting**: Submit weighted votes for liquidity pools
 - **Registration**: Link Bittensor hotkeys to Ethereum addresses
 - **Pool Management**: View current pool information and voting status
+- **Weight Verification**: Independently recompute and audit central API miner weights
 
 ## Quick Start
 
@@ -75,14 +76,17 @@ just vote --retract
 Validators read weights from the server and periodically push them to subnet 77.
 
 **What you can do:**
-- **Run weight calculation**: Process votes and compute final miner weights
-- **Submit weights to subnet**: Push calculated weights to the Bittensor network
+- **Run the validator**: Fetch weights from the server and set them on subnet 77
+- **Independently verify weights**: Recompute miner weights locally and compare to the central API
 - **Monitor system health**: Track voting patterns and pool performance
 
 **Key commands:**
 ```bash
 # Start the validator (processes votes and submits weights)
 just validate
+
+# Independently verify central API weights (see Weight Verification below)
+just verify-weights
 
 # Run in test mode (compute weights but skip submission)
 TEST_MODE=true just validate
@@ -93,7 +97,7 @@ LOG=true just validate
 
 **Setup required:**
 - `VALIDATOR_HOTKEY_URI` in `.env` (your validator hotkey)
-- `THEGRAPH_API_KEY` in `.env` (for Uniswap V3 LP data)
+- `THEGRAPH_API_KEY` in `.env` (required for `just verify-weights`; optional for running the validator itself)
 
 ### ⛏️ Miners
 
@@ -129,8 +133,77 @@ bun run pools
 | `register.ts` | Link a **Bittensor hotkey** → **EVM address** via the server. Requires `MINER_HOTKEY` and `ETH_KEY` environment variables. | `just register` |
 | `vote.ts` | Interactive pool-weight voting. Searches and selects pools, then submits weighted votes that sum to 10000. Supports retracting votes with `--retract` flag. | `just vote` |
 | `pools.ts` | Display current pool information from the API including pool details, voter information, and alpha token balances. | `just pools` |
+| `verify-weights.ts` | Independently recompute miner weights from API inputs + The Graph, then compare to `/weights`. | `just verify-weights` |
+| `weights.ts` | Read a validator's weight vector from chain for subnet 77. | `bunx tsx scripts/weights.ts <hotkey>` |
 
 > Run scripts with `LOG=true` to enable verbose logging where available.
+
+## Weight Verification
+
+Validators (or anyone auditing the subnet) can independently confirm that `https://77.creativebuilds.io/weights` matches the published calculation — without trusting the server's LP or scoring logic.
+
+### Quick verify
+
+```bash
+cp .env.example .env
+just verify-weights
+```
+
+If `THEGRAPH_API_KEY` is not set, the script launches an interactive setup: it explains where to get a key ([Subgraph Studio](https://thegraph.com/studio/apikeys/)), prompts you to paste it, optionally saves it to `.env` `[Y/n]`, then runs verification.
+
+On success you'll see `✓ Verification passed` with per-miner comparisons. Exit code `0` = pass, `1` = mismatch.
+
+### What the script does
+
+1. **From the central API** (inputs only): `/allVotes`, `/allHolders`, `/allMiners`, `/weights`
+2. **From The Graph** (your API key): Uniswap V3 LP positions for linked miner ETH wallets
+3. **Locally recomputes** final miner weights using `utils/weightCalculation.ts`
+4. **Compares** local vs API weights (default: 2% relative or `1e-5` absolute tolerance)
+
+Small drift is normal from server cache (~1–5 min) and live tick movement between fetches.
+
+### Options
+
+```bash
+# Looser tolerance (5%)
+bun run scripts/verify-weights.ts --tolerance 0.05
+
+# Skip interactive setup (CI / fail fast if key missing)
+bun run scripts/verify-weights.ts --no-setup
+
+# Debug: use API /positions instead of The Graph (not fully independent)
+bun run scripts/verify-weights.ts --use-api-positions
+```
+
+Environment overrides: `VERIFY_REL_TOLERANCE`, `VERIFY_ABS_TOLERANCE`, `PRODUCTION_URL`.
+
+### Weight calculation formula
+
+Implemented in `utils/weightCalculation.ts` (mirrors the production server).
+
+**1. Pool emissions** — alpha-weighted votes across pools:
+
+- Only voters with alpha balance > 0 count
+- `weightMultiplier = voter_alpha / total_alpha`
+- `poolEmission = Σ(pool_vote_weight × weightMultiplier) / 10000`
+
+**2. Position score** — liquidity depth and proximity to current price:
+
+- Position must be **in range**: `tickLower < currentTick < tickUpper` (strict)
+- Gaussian score from distance to lower bound, midpoint (4× weight), and upper bound
+- Std dev depends on fee tier: `100→10`, `500→50`, `3000→200`, `10000→500`
+- `rawScore = gaussianMultiplier × (liquidity / 1e9)`
+
+**3. Normalize within each pool** — each position gets its share of that pool's liquidity:
+
+- `normalizedScore = position.rawScore / Σ(raw scores in same pool)`
+
+**4. Final miner weight**:
+
+- `minerWeight = Σ(normalizedScore × poolEmission)` per position
+- Zero out weights below `1e-9`, then normalize all miners to sum to 1
+
+Per-position `emission` exposed by `/positions` is `poolEmission × normalizedScore`. USD values from CoinGecko are display-only and do not affect weights.
 
 ## Justfile Commands
 
@@ -141,6 +214,7 @@ The project uses `just` as a command runner for common tasks:
 | `just register` | Register a Bittensor public key with an EVM address |
 | `just vote` | Submit votes for liquidity pools |
 | `just validate` | Start the validator to process votes and submit weights |
+| `just verify-weights` | Recompute miner weights locally and compare to the central API |
 
 ## Environment Variables
 
@@ -151,8 +225,15 @@ Create a `.env` file in the project root. The most important keys are:
 # Used to set weights on chain
 VALIDATOR_HOTKEY_URI=
 
-# VALIDATOR ONLY: used to fetch uniswap v3 LP positions for miners
-THEGRAPH_API_KEY= 
+# Required for just verify-weights (independent LP fetch from The Graph)
+THEGRAPH_API_KEY=
+
+# Optional: central API base URL (default https://77.creativebuilds.io)
+PRODUCTION_URL=
+
+# Optional: verify-weights tolerances (defaults: rel=0.02, abs=1e-5)
+VERIFY_REL_TOLERANCE=
+VERIFY_ABS_TOLERANCE=
 
 # VALIDATOR ONLY: set to 'true' to run in test mode (weights saved to files, not submitted to network)
 TEST_MODE=false

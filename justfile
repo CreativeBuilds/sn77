@@ -28,4 +28,8 @@ check-key:
 
 # Calculate and display weight distributions
 weights:
-  bun run scripts/weights.ts 
+  bun run scripts/weights.ts
+
+# Independently recompute miner weights and compare to the central API
+verify-weights:
+  bun run scripts/verify-weights.ts 

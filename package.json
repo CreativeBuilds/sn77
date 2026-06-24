@@ -32,6 +32,7 @@
   },
   "scripts": {
     "pools": "bunx tsx scripts/pools.ts",
-    "validator": "bunx tsx validator/index.ts"
+    "validator": "bunx tsx validator/index.ts",
+    "verify-weights": "bunx tsx scripts/verify-weights.ts"
   }
 }
