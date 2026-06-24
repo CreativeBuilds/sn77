@@ -1,19 +1,23 @@
 import dotenv from 'dotenv';
+import { promises as fs } from 'fs';
+import path from 'path';
+import Table from 'cli-table3';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import type { ApiHolder, ApiMiner, ApiVote, LiquidityPosition } from '../utils/liquidityTypes';
 import { computeWeightsFromInputs, getAllVotedPoolAddresses } from '../utils/weightCalculation';
 import { getMinerLiquidityPositions } from '../utils/uniswapGraph';
-import { ensureGraphApiKey } from '../utils/verifyWeightsSetup';
+import { ensureGraphApiKey, isYes, prompt } from '../utils/verifyWeightsSetup';
 
 dotenv.config();
 
 const PRODUCTION_URL = process.env.PRODUCTION_URL || 'https://77.creativebuilds.io';
-const DEFAULT_REL_TOLERANCE = Number(process.env.VERIFY_REL_TOLERANCE || 0.02);
-const DEFAULT_ABS_TOLERANCE = Number(process.env.VERIFY_ABS_TOLERANCE || 1e-5);
+const TRUNC_LEN = 7;
+const DRIFT_NOTE = 'Server weights are recalculated every ~5 minutes; drift may accumulate between refreshes and live tick movement.';
 
 type ApiResp<T> = { success: boolean; error?: string } & T;
-type VerifyArgv = { tolerance: number; 'abs-tolerance': number; 'use-api-positions': boolean; top: number; 'no-setup': boolean };
+type VerifyArgv = { 'use-api-positions': boolean; 'no-setup': boolean };
+type WeightRow = { hotkey: string; local: number; server: number; difference: number };
 
 const fetchJson = async <T>(path: string): Promise<T> => {
   const r = await fetch(`${PRODUCTION_URL}${path}`);
@@ -23,29 +27,29 @@ const fetchJson = async <T>(path: string): Promise<T> => {
   return data;
 };
 
-const compareWeights = (
-  local: Record<string, number>,
-  api: Record<string, number>,
-  relTolerance: number,
-  absTolerance: number,
-) => {
+const truncateHotkey = (hotkey: string) => hotkey.length <= TRUNC_LEN ? hotkey : `${hotkey.slice(0, TRUNC_LEN)}...`;
+
+const buildWeightRows = (local: Record<string, number>, api: Record<string, number>): WeightRow[] => {
   const keys = new Set([...Object.keys(local), ...Object.keys(api)]);
-  const mismatches: Array<{ hotkey: string; local: number; api: number; diff: number; relDiff: number }> = [];
-  let comparedNonZero = 0;
-  let matched = 0;
+  const rows: WeightRow[] = [];
   for (const hotkey of keys) {
-    const l = local[hotkey] ?? 0;
-    const a = api[hotkey] ?? 0;
-    const diff = Math.abs(l - a);
-    const base = Math.max(Math.abs(a), Math.abs(l), absTolerance);
-    const relDiff = diff / base;
-    if (l > absTolerance || a > absTolerance) comparedNonZero++;
-    const ok = diff <= absTolerance || relDiff <= relTolerance;
-    if (ok) { matched++; continue; }
-    mismatches.push({ hotkey, local: l, api: a, diff, relDiff });
+    const lv = local[hotkey] ?? 0;
+    const sv = api[hotkey] ?? 0;
+    rows.push({ hotkey, local: lv, server: sv, difference: Math.abs(lv - sv) });
   }
-  mismatches.sort((x, y) => y.diff - x.diff);
-  return { mismatches, comparedNonZero, matched, totalKeys: keys.size };
+  return rows.sort((a, b) => b.server - a.server || b.local - a.local || a.hotkey.localeCompare(b.hotkey));
+};
+
+const printWeightTable = (rows: WeightRow[]) => {
+  const table = new Table({ head: ['hotkey', 'local', 'server', 'difference'], style: { head: [], border: [] } });
+  for (const r of rows) table.push([truncateHotkey(r.hotkey), r.local.toFixed(8), r.server.toFixed(8), r.difference.toFixed(8)]);
+  console.log(table.toString());
+};
+
+const saveWeightTable = async (rows: WeightRow[], filePath: string) => {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const lines = ['hotkey,local,server,difference', ...rows.map(r => `${r.hotkey},${r.local},${r.server},${r.difference}`)];
+  await fs.writeFile(filePath, `${lines.join('\n')}\n`);
 };
 
 const stripEmission = (positions: Record<string, (LiquidityPosition & { emission?: number })[]>): Record<string, LiquidityPosition[]> => {
@@ -89,40 +93,26 @@ const runVerification = async (graphKey: string, argv: VerifyArgv): Promise<numb
   const [localWeights, weightErr] = computeWeightsFromInputs(votes, holders, rawPositions);
   if (weightErr) { console.error('Local weight calculation failed:', weightErr.message); return 1; }
 
-  const localNonZero = Object.values(localWeights).filter(w => w > 0).length;
-  const apiNonZero = Object.values(apiWeights).filter(w => w > 0).length;
-  console.log(`Computed ${Object.keys(localWeights).length} miner weights (${localNonZero} non-zero); API has ${Object.keys(apiWeights).length} (${apiNonZero} non-zero)`);
+  const rows = buildWeightRows(localWeights, apiWeights);
+  const localNonZero = rows.filter(r => r.local > 0).length;
+  const apiNonZero = rows.filter(r => r.server > 0).length;
+  console.log(`\nComputed ${rows.length} miner weights (${localNonZero} non-zero local, ${apiNonZero} non-zero server)\n`);
+  printWeightTable(rows);
+  console.log(`\n${DRIFT_NOTE}`);
 
-  const { mismatches, comparedNonZero, matched, totalKeys } = compareWeights(localWeights, apiWeights, argv.tolerance, argv['abs-tolerance']);
-
-  const topLocal = Object.entries(localWeights).filter(([, w]) => w > 0).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const topApi = Object.entries(apiWeights).filter(([, w]) => w > 0).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  console.log('\nTop local weights:');
-  for (const [hk, w] of topLocal) console.log(`  ${hk.slice(0, 12)}... ${w.toFixed(8)}  (api: ${(apiWeights[hk] ?? 0).toFixed(8)})`);
-  console.log('Top API weights:');
-  for (const [hk, w] of topApi) console.log(`  ${hk.slice(0, 12)}... ${w.toFixed(8)}  (local: ${(localWeights[hk] ?? 0).toFixed(8)})`);
-
-  if (!mismatches.length) {
-    console.log(`\n✓ Verification passed (${matched}/${totalKeys} keys within tolerance; rel<=${argv.tolerance}, abs<=${argv['abs-tolerance']})`);
-    console.log('Note: small drift is expected from ~1-5m server cache and live tick movement.');
-    return 0;
-  }
-
-  console.log(`\n✗ ${mismatches.length} miner(s) outside tolerance (rel<=${argv.tolerance}, abs<=${argv['abs-tolerance']})`);
-  for (const m of mismatches.slice(0, argv.top)) console.log(`  ${m.hotkey.slice(0, 16)}... local=${m.local.toFixed(8)} api=${m.api.toFixed(8)} diff=${m.diff.toFixed(8)} rel=${(m.relDiff * 100).toFixed(2)}%`);
-  if (mismatches.length > argv.top) console.log(`  ... and ${mismatches.length - argv.top} more`);
-  console.log(`Matched ${matched}/${totalKeys} keys; ${comparedNonZero} had non-zero weight on either side.`);
-  console.log('Tips: retry in a few minutes; use --use-api-positions to isolate Graph vs formula drift.');
-  return 1;
+  const saveAnswer = process.stdin.isTTY ? await prompt('\nSave full results to file? [Y/n] ') : 'n';
+  if (!isYes(saveAnswer)) return 0;
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const filePath = path.join(process.cwd(), 'logs', `verify-weights-${ts}.csv`);
+  await saveWeightTable(rows, filePath);
+  console.log(`Saved to ${filePath}`);
+  return 0;
 };
 
 async function main(): Promise<number> {
   const argv = yargs(hideBin(process.argv))
-    .option('tolerance', { type: 'number', default: DEFAULT_REL_TOLERANCE, describe: 'Max relative diff per miner (e.g. 0.02 = 2%)' })
-    .option('abs-tolerance', { type: 'number', default: DEFAULT_ABS_TOLERANCE, describe: 'Absolute diff treated as match' })
     .option('use-api-positions', { type: 'boolean', default: false, describe: 'Use /positions from API instead of The Graph (less independent)' })
     .option('no-setup', { type: 'boolean', default: false, describe: 'Skip interactive setup; fail if THEGRAPH_API_KEY is missing' })
-    .option('top', { type: 'number', default: 10, describe: 'How many mismatches to print' })
     .help().parseSync() as VerifyArgv;
 
   let graphKey = process.env.THEGRAPH_API_KEY || '';

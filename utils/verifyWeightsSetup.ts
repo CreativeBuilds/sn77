@@ -8,12 +8,12 @@ const GRAPH_DOCS_URL = 'https://thegraph.com/docs/en/subgraphs/querying/managing
 let chalk: any;
 const loadChalk = async () => { if (!chalk) chalk = (await import('chalk')).default; return chalk; };
 
-const prompt = (q: string): Promise<string> => new Promise(resolve => {
+export const prompt = (q: string): Promise<string> => new Promise(resolve => {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   rl.question(q, a => { rl.close(); resolve(a); });
 });
 
-const isYes = (a: string) => { const s = a.trim().toLowerCase(); return s === '' || s === 'y' || s === 'yes'; };
+export const isYes = (a: string) => { const s = a.trim().toLowerCase(); return s === '' || s === 'y' || s === 'yes'; };
 
 export const ensureGraphApiKey = async (currentKey: string, noSetup: boolean): Promise<[string, Error | null]> => {
   if (currentKey) return [currentKey, null];

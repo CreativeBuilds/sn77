@@ -151,23 +151,20 @@ just verify-weights
 
 If `THEGRAPH_API_KEY` is not set, the script launches an interactive setup: it explains where to get a key ([Subgraph Studio](https://thegraph.com/studio/apikeys/)), prompts you to paste it, optionally saves it to `.env` `[Y/n]`, then runs verification.
 
-On success you'll see `✓ Verification passed` with per-miner comparisons. Exit code `0` = pass, `1` = mismatch.
+On success you'll see a comparison table of local vs server weights. Exit code `0` on completion, `1` on fetch/calculation errors.
 
 ### What the script does
 
 1. **From the central API** (inputs only): `/allVotes`, `/allHolders`, `/allMiners`, `/weights`
 2. **From The Graph** (your API key): Uniswap V3 LP positions for linked miner ETH wallets
 3. **Locally recomputes** final miner weights using `utils/weightCalculation.ts`
-4. **Compares** local vs API weights (default: 2% relative or `1e-5` absolute tolerance)
+4. **Compares** local vs API weights in a full table (`hotkey | local | server | difference`)
 
-Small drift is normal from server cache (~1–5 min) and live tick movement between fetches.
+Server weights are recalculated every ~5 minutes; drift may accumulate between refreshes and live tick movement.
 
 ### Options
 
 ```bash
-# Looser tolerance (5%)
-bun run scripts/verify-weights.ts --tolerance 0.05
-
 # Skip interactive setup (CI / fail fast if key missing)
 bun run scripts/verify-weights.ts --no-setup
 
@@ -175,7 +172,7 @@ bun run scripts/verify-weights.ts --no-setup
 bun run scripts/verify-weights.ts --use-api-positions
 ```
 
-Environment overrides: `VERIFY_REL_TOLERANCE`, `VERIFY_ABS_TOLERANCE`, `PRODUCTION_URL`.
+Environment override: `PRODUCTION_URL`.
 
 ### Weight calculation formula
 
@@ -230,10 +227,6 @@ THEGRAPH_API_KEY=
 
 # Optional: central API base URL (default https://77.creativebuilds.io)
 PRODUCTION_URL=
-
-# Optional: verify-weights tolerances (defaults: rel=0.02, abs=1e-5)
-VERIFY_REL_TOLERANCE=
-VERIFY_ABS_TOLERANCE=
 
 # VALIDATOR ONLY: set to 'true' to run in test mode (weights saved to files, not submitted to network)
 TEST_MODE=false
