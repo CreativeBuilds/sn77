@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Wallet, ethers } from 'ethers';
 import readline from 'readline';
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { blake2AsU8a, encodeAddress } from '@polkadot/util-crypto';
@@ -48,7 +48,7 @@ const prompt = (q: string): Promise<string> =>
     });
   });
 
-dotenv.config();
+// Environment variables are loaded via 'dotenv/config' import above
 
 async function intro(): Promise<boolean> {
   const c = await loadChalk();

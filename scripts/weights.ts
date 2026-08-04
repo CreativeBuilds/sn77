@@ -1,9 +1,7 @@
 import { ApiPromise, WsProvider } from '@polkadot/api';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import 'dotenv/config';
 
 // Standard [value, err] tuple type
 export type Result<T> = [T, Error | null];

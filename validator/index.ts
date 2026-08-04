@@ -4,7 +4,7 @@
  * Determines the weight of each miner and sets weight every interval.
  */
 
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
@@ -88,8 +88,7 @@ function userLog(...args: any[]): void {
     _origLog(`[${new Date().toISOString()}]`, ...args);
 }
 
-// Load environment variables from .env file
-dotenv.config();
+// Environment variables are loaded via 'dotenv/config' import above
 
 // Toggle test mode via env var; when true, weights are not pushed on-chain
 // Default to false unless explicitly set to true
